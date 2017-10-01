@@ -71,9 +71,9 @@ def query(connection):
     dup_reader = connection.cursor()
     img_reader = connection.cursor()
     for (hash_, count) in dup_reader.execute('SELECT * FROM duplicate_images'):
-        print(hash_)
-        for (path, ) in img_reader.execute('SELECT path FROM images WHERE hash=?', (hash_, )):
-            print('   ', path)
+        for i, (path, ) in enumerate(img_reader.execute('SELECT path FROM images WHERE hash=?', (hash_, ))):
+            if i > 0:
+                print('"' + path + '"')
 
 
 def main(args):
@@ -82,7 +82,7 @@ def main(args):
     connection = sqlite3.connect(dir_path_hash + '.db')
     create_images_table(connection, dir_path)
     create_duplicate_images_table(connection)
-    #query(connection)
+    query(connection)
     connection.close()
     return 0
 

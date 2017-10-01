@@ -1,3 +1,4 @@
+from collections import defaultdict
 import hashlib
 import itertools as it
 import os
@@ -17,12 +18,8 @@ def get_file_paths(root_dir, extensions):
     for dirpath, dirnames, filenames in os.walk(os.path.abspath(root_dir)):
         for filename in filenames:
             _, ext = os.path.splitext(filename)
-            if ext.lower() in extensions:
+            if (ext.lower() in extensions) or (len(extensions) == 0):
                 yield os.path.join(dirpath, filename)
-
-
-def get_image_extensions():
-    return ['.bmp', '.gif', '.jpg', '.jpe', '.jpeg', '.png', '.tif', '.tiff']
 
 
 def get_path_hash(path):
@@ -30,48 +27,56 @@ def get_path_hash(path):
     return hash_.hexdigest()
 
 
+def get_image_extensions():
+    return ['.bmp', '.gif', '.jpg', '.jpe', '.jpeg', '.png', '.tif', '.tiff']
+
+
 def get_video_extensions():
     return ['.avi', '.mov', '.mp4', '.mpg', '.mkv', '.mts']
 
 
-def create_images_table(connection, dir_path):
+def get_hashes_table_name(name):
+    return name + '_hashes'
+
+
+def get_duplicates_table_name(name):
+    return name + '_duplicates'
+
+
+def create_hashes_table(connection, dir_path, name, get_extensions_func):
+    hashes_table_name = get_hashes_table_name(name)
     cursor = connection.cursor()
-    cursor.execute("""SELECT name FROM sqlite_master
-                      WHERE type='table' AND name='images'""")
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='" + hashes_table_name + "'")
     exists = bool(cursor.fetchone())
     if not exists:
-        print('Creating images table')
-        cursor.execute('CREATE TABLE images (hash text, path text)')
-        for file_path in get_file_paths(dir_path, set(get_image_extensions())):
+        print('Creating table: ' + hashes_table_name)
+        cursor.execute('CREATE TABLE ' + hashes_table_name + ' (hash text, path text)')
+        for file_path in get_file_paths(dir_path, set(get_extensions_func())):
             file_hash = get_file_hash(file_path)
-            cursor.execute('INSERT INTO images VALUES (?,?)', (file_hash, file_path))
+            cursor.execute('INSERT INTO ' + hashes_table_name + ' VALUES (?,?)', (file_hash, file_path))
         connection.commit()
 
 
-def create_duplicate_images_table(connection):
+def create_duplicates_table(connection, name):
+    duplicates_table_name = get_duplicates_table_name(name)
     reader = connection.cursor()
-    reader.execute("""SELECT name FROM sqlite_master
-                      WHERE type='table' AND name='duplicate_images'""")
+    reader.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='" + duplicates_table_name + "'")
     exists = bool(reader.fetchone())
     if not exists:
-        print('Creating duplicate images table')
+        print('Creating table: ' + duplicates_table_name)
         writer = connection.cursor()
-        writer.execute('CREATE TABLE duplicate_images (hash text, dup_count integer)')
-        reader.execute('''SELECT hash, COUNT(*) as c
-                          FROM images
-                          GROUP BY hash
-                          HAVING c > 1
-                          ORDER BY c DESC''')
+        writer.execute('CREATE TABLE ' + duplicates_table_name + ' (hash text, dup_count integer)')
+        reader.execute('SELECT hash, COUNT(*) as c FROM ' + get_hashes_table_name(name) + ' GROUP BY hash HAVING c > 1 ORDER BY c DESC')
         for (hash_, count) in reader:
-            writer.execute('INSERT INTO duplicate_images VALUES (?,?)', (hash_, count))
+            writer.execute('INSERT INTO ' + duplicates_table_name + ' VALUES (?,?)', (hash_, count))
         connection.commit()
 
 
-def query(connection):
-    dup_reader = connection.cursor()
-    img_reader = connection.cursor()
-    for (hash_, count) in dup_reader.execute('SELECT * FROM duplicate_images'):
-        for i, (path, ) in enumerate(img_reader.execute('SELECT path FROM images WHERE hash=?', (hash_, ))):
+def query(connection, name):
+    dups_reader = connection.cursor()
+    hashes_reader = connection.cursor()
+    for (hash_, count) in dups_reader.execute('SELECT * FROM ' + get_duplicates_table_name(name)):
+        for i, (path, ) in enumerate(hashes_reader.execute('SELECT path FROM ' + get_hashes_table_name(name) + ' WHERE hash=?', (hash_, ))):
             if i > 0:
                 print('"' + path + '"')
 
@@ -80,9 +85,15 @@ def main(args):
     dir_path = '../../Google Drive'
     dir_path_hash = get_path_hash(dir_path)
     connection = sqlite3.connect(dir_path_hash + '.db')
-    create_images_table(connection, dir_path)
-    create_duplicate_images_table(connection)
-    query(connection)
+
+    create_hashes_table(connection, dir_path, 'image', get_image_extensions)
+    create_duplicates_table(connection, 'image')
+    query(connection, 'image')
+
+    #create_hashes_table(connection, dir_path, 'file', list)
+    #create_duplicates_table(connection, 'file')
+    #query(connection, 'file')
+
     connection.close()
     return 0
 
